@@ -258,7 +258,6 @@ func (m *model) handleInputConfirm() {
 	m.editMode = false
 	m.inputBuf = ""
 
-	// FIX: Odśwież listę widoczną (zaktualizuj kopie danych)
 	m.recalcVisible()
 
 	saveTodo(m.filename, m.items, m.trash)
@@ -797,32 +796,45 @@ func saveTodo(filename string, items []item, trash []item) {
 	writer.Flush()
 }
 
-// --- IO (Config & Themes - GLOBAL SUPPORT) ---
+// --- IO (Config & Themes - SMART DEDUPLICATION) ---
 
 func loadThemes() []Theme {
-	var content []byte
-	var err error
+	var finalThemes []Theme
+	seen := make(map[string]bool)
 
-	content, err = os.ReadFile(defaultThemesFile)
+	addThemes := func(source []Theme) {
+		for _, t := range source {
+			if !seen[t.Name] {
+				finalThemes = append(finalThemes, t)
+				seen[t.Name] = true
+			}
+		}
+	}
+
+	localContent, err := os.ReadFile(defaultThemesFile)
 	if err == nil {
-		return parseThemes(content)
+		addThemes(parseThemes(localContent))
 	}
 
 	configDir, err := os.UserConfigDir()
 	if err == nil {
 		globalPath := filepath.Join(configDir, appName, defaultThemesFile)
-		content, err = os.ReadFile(globalPath)
+		userContent, err := os.ReadFile(globalPath)
 		if err == nil {
-			return parseThemes(content)
+			addThemes(parseThemes(userContent))
 		}
 	}
 
-	content, err = embeddedThemesFS.ReadFile(defaultThemesFile)
+	embeddedContent, err := embeddedThemesFS.ReadFile(defaultThemesFile)
 	if err == nil {
-		return parseThemes(content)
+		addThemes(parseThemes(embeddedContent))
 	}
 
-	return nil
+	if len(finalThemes) == 0 {
+		return nil
+	}
+
+	return finalThemes
 }
 
 func parseThemes(content []byte) []Theme {

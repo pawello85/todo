@@ -28,5 +28,175 @@
     "special": "#a6e22e",
     "error": "#f92672",
     "accent": "#66d9ef"
+  },
+  {
+    "name": "Nord",
+    "base": "#2e3440",
+    "highlight": "#88c0d0",
+    "text": "#d8dee9",
+    "comment": "#4c566a",
+    "special": "#a3be8c",
+    "error": "#bf616a",
+    "accent": "#81a1c1"
+  },
+  {
+    "name": "Tokyo Night",
+    "base": "#1a1b26",
+    "highlight": "#7aa2f7",
+    "text": "#c0caf5",
+    "comment": "#565f89",
+    "special": "#9ece6a",
+    "error": "#f7768e",
+    "accent": "#bb9af7"
+  },
+  {
+    "name": "Catppuccin Mocha",
+    "base": "#1e1e2e",
+    "highlight": "#cba6f7",
+    "text": "#cdd6f4",
+    "comment": "#6c7086",
+    "special": "#a6e3a1",
+    "error": "#f38ba8",
+    "accent": "#f9e2af"
+  },
+  {
+    "name": "One Dark Pro",
+    "base": "#282c34",
+    "highlight": "#61afef",
+    "text": "#abb2bf",
+    "comment": "#5c6370",
+    "special": "#98c379",
+    "error": "#e06c75",
+    "accent": "#c678dd"
+  },
+  {
+    "name": "Solarized Dark",
+    "base": "#002b36",
+    "highlight": "#268bd2",
+    "text": "#839496",
+    "comment": "#586e75",
+    "special": "#859900",
+    "error": "#dc322f",
+    "accent": "#d33682"
+  },
+  {
+    "name": "Kanagawa",
+    "base": "#1f1f28",
+    "highlight": "#7e9cd8",
+    "text": "#dcd7ba",
+    "comment": "#727169",
+    "special": "#76946a",
+    "error": "#c34043",
+    "accent": "#ffa066"
+  },
+  {
+    "name": "Rose Pine",
+    "base": "#191724",
+    "highlight": "#ebbcba",
+    "text": "#e0def4",
+    "comment": "#6e6a86",
+    "special": "#9ccfd8",
+    "error": "#eb6f92",
+    "accent": "#31748f"
+  },
+  {
+    "name": "Cobalt2",
+    "base": "#193549",
+    "highlight": "#ffc600",
+    "text": "#ffffff",
+    "comment": "#0088ff",
+    "special": "#3ad900",
+    "error": "#ff0000",
+    "accent": "#00d0ff"
+  },
+  {
+    "name": "Cyberpunk Neon",
+    "base": "#000b1e",
+    "highlight": "#00ff9f",
+    "text": "#00f3ff",
+    "comment": "#123e59",
+    "special": "#fcee0a",
+    "error": "#ff0055",
+    "accent": "#ff0055"
+  },
+  {
+    "name": "Ayu Dark",
+    "base": "#0f1419",
+    "highlight": "#ff9900",
+    "text": "#e6e1cf",
+    "comment": "#5c6773",
+    "special": "#addb67",
+    "error": "#ff3333",
+    "accent": "#39bae6"
+  },
+  {
+    "name": "Night Owl",
+    "base": "#011627",
+    "highlight": "#82aaff",
+    "text": "#d6deeb",
+    "comment": "#637777",
+    "special": "#22da6e",
+    "error": "#ef5350",
+    "accent": "#c792ea"
+  },
+  {
+    "name": "Shades of Purple",
+    "base": "#2d2b55",
+    "highlight": "#fad000",
+    "text": "#ffffff",
+    "comment": "#b362ff",
+    "special": "#a5ff90",
+    "error": "#ff628c",
+    "accent": "#9effff"
+  },
+  {
+    "name": "Synthwave '84",
+    "base": "#2b213a",
+    "highlight": "#ff7edb",
+    "text": "#fffbf3",
+    "comment": "#6c657e",
+    "special": "#72f1b8",
+    "error": "#fe4450",
+    "accent": "#36f9f6"
+  },
+  {
+    "name": "GitHub Dark",
+    "base": "#0d1117",
+    "highlight": "#58a6ff",
+    "text": "#c9d1d9",
+    "comment": "#8b949e",
+    "special": "#3fb950",
+    "error": "#f85149",
+    "accent": "#d2a8ff"
+  },
+  {
+    "name": "Material Palenight",
+    "base": "#292d3e",
+    "highlight": "#c792ea",
+    "text": "#bfc7d5",
+    "comment": "#697098",
+    "special": "#c3e88d",
+    "error": "#ff5370",
+    "accent": "#89ddff"
+  },
+  {
+    "name": "Andromeda",
+    "base": "#23262e",
+    "highlight": "#00e8c6",
+    "text": "#d5ced9",
+    "comment": "#5f6167",
+    "special": "#96e072",
+    "error": "#ff00aa",
+    "accent": "#f39c12"
+  },
+  {
+    "name": "Hacker Green",
+    "base": "#0d0208",
+    "highlight": "#00ff41",
+    "text": "#008f11",
+    "comment": "#003b00",
+    "special": "#00ff41",
+    "error": "#ff0000",
+    "accent": "#00ff41"
   }
 ]
