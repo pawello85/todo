@@ -29,7 +29,7 @@ const (
 )
 
 const (
-	appName           = "todo-app" // Nazwa folderu w configu
+	appName           = "todo-app"
 	defaultThemesFile = "themes.json"
 	configFile        = "config.json"
 )
@@ -118,7 +118,6 @@ type model struct {
 // --- INITIALIZATION ---
 
 func initialModel(filename string) model {
-	// 1. Ładowanie motywów (Local -> ConfigDir -> Embed)
 	loadedThemes := loadThemes()
 	if len(loadedThemes) > 0 {
 		themes = loadedThemes
@@ -126,7 +125,6 @@ func initialModel(filename string) model {
 		themes = []Theme{defaultTheme}
 	}
 
-	// 2. Ładowanie konfiguracji
 	config := loadConfig()
 	startTheme := themes[0]
 
@@ -208,19 +206,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inputMode {
 			switch msg.Type {
 			case tea.KeyEnter:
-				if len(m.inputBuf) > 0 {
-					m.handleInputConfirm()
-				}
-				m.inputMode = false
-				m.editMode = false
-				m.addSubtaskMode = false
-				m.inputBuf = ""
+				m.handleInputConfirm()
 
 			case tea.KeyEsc:
-				m.inputMode = false
-				m.editMode = false
-				m.addSubtaskMode = false
-				m.inputBuf = ""
+				m.handleInputCancel()
+
 			case tea.KeyBackspace, tea.KeyDelete:
 				if len(m.inputBuf) > 0 {
 					m.inputBuf = m.inputBuf[:len(m.inputBuf)-1]
@@ -256,30 +246,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleInputConfirm() {
-	if m.editMode {
-		realIdx := m.visibleItems[m.cursorMain].index
-		m.items[realIdx].title = m.inputBuf
-	} else if m.addSubtaskMode {
-		parentIdx := m.visibleItems[m.cursorMain].index
-		parent := &m.items[parentIdx]
-		parent.collapsed = false
+	if len(m.inputBuf) == 0 && !m.editMode {
+		m.handleInputCancel()
+		return
+	}
 
-		newItem := item{
-			title: m.inputBuf,
-			level: parent.level + 1,
+	realIdx := m.visibleItems[m.cursorMain].index
+	m.items[realIdx].title = m.inputBuf
+
+	m.inputMode = false
+	m.editMode = false
+	m.inputBuf = ""
+
+	// FIX: Odśwież listę widoczną (zaktualizuj kopie danych)
+	m.recalcVisible()
+
+	saveTodo(m.filename, m.items, m.trash)
+}
+
+func (m *model) handleInputCancel() {
+	if m.editMode {
+		m.inputMode = false
+		m.editMode = false
+		m.inputBuf = ""
+	} else {
+		realIdx := m.visibleItems[m.cursorMain].index
+		m.items = append(m.items[:realIdx], m.items[realIdx+1:]...)
+
+		m.recalcVisible()
+		if m.cursorMain > 0 {
+			m.cursorMain--
 		}
 
-		m.items = append(m.items[:parentIdx+1], append([]item{newItem}, m.items[parentIdx+1:]...)...)
-		m.recalcVisible()
-		m.cursorMain++
-
-	} else {
-		newItem := item{title: m.inputBuf, level: 0}
-		m.items = append(m.items, newItem)
-		m.recalcVisible()
-		m.cursorMain = len(m.visibleItems) - 1
+		m.inputMode = false
+		m.inputBuf = ""
 	}
-	saveTodo(m.filename, m.items, m.trash)
 }
 
 func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -318,22 +319,39 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		m.inputMode = true
 		m.editMode = false
-		m.addSubtaskMode = false
 		m.inputBuf = ""
+
+		newItem := item{title: "", level: 0}
+		m.items = append(m.items, newItem)
+		m.recalcVisible()
+		m.cursorMain = len(m.visibleItems) - 1
+
 	case "m":
 		if realIdx != -1 {
 			m.inputMode = true
 			m.editMode = false
-			m.addSubtaskMode = true
 			m.inputBuf = ""
+
+			parent := &m.items[realIdx]
+			parent.collapsed = false
+
+			newItem := item{
+				title: "",
+				level: parent.level + 1,
+			}
+
+			m.items = append(m.items[:realIdx+1], append([]item{newItem}, m.items[realIdx+1:]...)...)
+			m.recalcVisible()
+			m.cursorMain++
 		}
+
 	case "e":
 		if realIdx != -1 {
 			m.inputMode = true
 			m.editMode = true
-			m.addSubtaskMode = false
 			m.inputBuf = m.items[realIdx].title
 		}
+
 	case "d":
 		if realIdx != -1 {
 			countToDelete := 1
@@ -442,37 +460,26 @@ func (m model) View() string {
 	}
 
 	t := m.activeTheme
-	baseStyle := lipgloss.NewStyle().Foreground(t.Text)
-	highlightStyle := lipgloss.NewStyle().Foreground(t.Highlight)
 	dimStyle := lipgloss.NewStyle().Foreground(t.Comment)
 
-	title := "// TODO"
+	// --- HEADER ---
+	modeName := "TODO"
 	if m.state == viewTrash {
-		title = "// BIN (Persistent)"
+		modeName = "BIN"
 	} else if m.state == viewThemeSelector {
-		title = "// THEMES"
+		modeName = "THEMES"
 	}
 
-	header := lipgloss.NewStyle().
-		Foreground(t.Base).Background(t.Highlight).Padding(0, 1).Bold(true).
-		Render(fmt.Sprintf("%s :: %s", title, m.filename))
-	headerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, header)
-
-	var content string
-	h := m.height - 4
-	if h < 5 {
-		h = 5
+	fullPath, err := filepath.Abs(m.filename)
+	if err != nil {
+		fullPath = m.filename
 	}
 
-	switch m.state {
-	case viewMain:
-		content = m.renderList(h, t)
-	case viewTrash:
-		content = m.renderTrash(h, t)
-	case viewThemeSelector:
-		content = m.renderThemeSelector(h, t)
-	}
+	headerText := fmt.Sprintf("// %s %s", modeName, fullPath)
+	styledHeader := lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight).Bold(true).Padding(0, 1).Render(headerText)
+	headerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, styledHeader)
 
+	// --- FOOTER ---
 	help := ""
 	switch m.state {
 	case viewMain:
@@ -484,32 +491,29 @@ func (m model) View() string {
 	}
 
 	if m.inputMode {
-		mode := "New Task"
-		if m.editMode {
-			mode = "Edit Task"
-		}
-		if m.addSubtaskMode {
-			mode = "New Subtask"
-		}
-		help = fmt.Sprintf("[%s] Enter to save, Esc to cancel", mode)
+		help = "Enter to Confirm • Esc to Cancel"
 	}
 
 	footer := dimStyle.Render(help)
 	footerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer)
 
-	inputView := ""
-	if m.state == viewMain && m.inputMode {
-		prefix := "New:"
-		if m.editMode {
-			prefix = "Edit:"
-		}
-		if m.addSubtaskMode {
-			prefix = "Subtask:"
-		}
-		inputView = fmt.Sprintf("\n %s %s█", highlightStyle.Render(prefix), baseStyle.Render(m.inputBuf))
+	// --- CONTENT ---
+	availableH := m.height - 4
+	if availableH < 5 {
+		availableH = 5
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, headerBlock, content, inputView, footerBlock)
+	var content string
+	switch m.state {
+	case viewMain:
+		content = m.renderList(availableH, t)
+	case viewTrash:
+		content = m.renderTrash(availableH, t)
+	case viewThemeSelector:
+		content = m.renderThemeSelector(availableH, t)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, headerBlock, content, footerBlock)
 }
 
 func (m model) renderList(height int, t Theme) string {
@@ -532,7 +536,6 @@ func (m model) renderList(height int, t Theme) string {
 		} else {
 			var sb strings.Builder
 			sb.WriteString(" ")
-
 			for l := 1; l < item.level; l++ {
 				hasContinuation := false
 				for k := i + 1; k < len(m.visibleItems); k++ {
@@ -551,7 +554,6 @@ func (m model) renderList(height int, t Theme) string {
 					sb.WriteString("   ")
 				}
 			}
-
 			isLastInGroup := true
 			for k := i + 1; k < len(m.visibleItems); k++ {
 				futureItem := m.visibleItems[k].data
@@ -563,7 +565,6 @@ func (m model) renderList(height int, t Theme) string {
 					break
 				}
 			}
-
 			if isLastInGroup {
 				sb.WriteString(" └─")
 			} else {
@@ -586,24 +587,32 @@ func (m model) renderList(height int, t Theme) string {
 			checkStyle = lipgloss.NewStyle().Foreground(t.Text)
 		}
 
-		titleStyle := lipgloss.NewStyle().Foreground(t.Text)
-		if item.done {
-			titleStyle = lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
+		// --- INLINE INPUT RENDERING ---
+		var titleRendered string
+		if isCursor && m.inputMode {
+			inputStyle := lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight)
+			titleRendered = inputStyle.Render(m.inputBuf + "█")
+		} else {
+			titleStyle := lipgloss.NewStyle().Foreground(t.Text)
+			if item.done {
+				titleStyle = lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
+			}
+			titleRendered = titleStyle.Render(item.title)
 		}
 
 		row := fmt.Sprintf("%s%s%s %s",
 			lipgloss.NewStyle().Foreground(t.Highlight).Render(cursor),
 			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
 			checkStyle.Render(checkStr),
-			titleStyle.Render(item.title),
+			titleRendered,
 		)
-
 		s.WriteString(row + "\n")
 	}
 
 	return lipgloss.NewStyle().
-		Width(m.width - 4).Height(height).
-		Border(lipgloss.RoundedBorder()).BorderForeground(t.Highlight).
+		Width(m.width - 2).Height(height).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Highlight).
 		Render(s.String())
 }
 
@@ -627,7 +636,6 @@ func (m model) renderTrash(height int, t Theme) string {
 		} else {
 			var sb strings.Builder
 			sb.WriteString(" ")
-
 			for l := 1; l < item.level; l++ {
 				hasContinuation := false
 				for k := i + 1; k < len(m.trash); k++ {
@@ -646,7 +654,6 @@ func (m model) renderTrash(height int, t Theme) string {
 					sb.WriteString("   ")
 				}
 			}
-
 			isLastInGroup := true
 			for k := i + 1; k < len(m.trash); k++ {
 				futureItem := m.trash[k]
@@ -658,7 +665,6 @@ func (m model) renderTrash(height int, t Theme) string {
 					break
 				}
 			}
-
 			if isLastInGroup {
 				sb.WriteString(" └─")
 			} else {
@@ -674,7 +680,12 @@ func (m model) renderTrash(height int, t Theme) string {
 		)
 		s.WriteString(row + "\n")
 	}
-	return lipgloss.NewStyle().Width(m.width - 4).Height(height).Border(lipgloss.RoundedBorder()).BorderForeground(t.Error).Render(s.String())
+
+	return lipgloss.NewStyle().
+		Width(m.width - 2).Height(height).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Error).
+		Render(s.String())
 }
 
 func (m model) renderThemeSelector(height int, t Theme) string {
@@ -692,7 +703,12 @@ func (m model) renderThemeSelector(height int, t Theme) string {
 		row := fmt.Sprintf("%s%s  %s", lipgloss.NewStyle().Foreground(t.Highlight).Render(cursor), nameStyle.Render(theme.Name), preview)
 		s.WriteString(row + "\n")
 	}
-	return lipgloss.NewStyle().Width(m.width - 4).Height(height).Border(lipgloss.RoundedBorder()).BorderForeground(t.Highlight).Render(s.String())
+
+	return lipgloss.NewStyle().
+		Width(m.width - 2).Height(height).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Highlight).
+		Render(s.String())
 }
 
 func paginator(cursor, height, total int) (int, int) {
@@ -783,19 +799,15 @@ func saveTodo(filename string, items []item, trash []item) {
 
 // --- IO (Config & Themes - GLOBAL SUPPORT) ---
 
-// Sprawdza po kolei: Local Dir -> User Config Dir -> Embed
 func loadThemes() []Theme {
 	var content []byte
 	var err error
 
-	// 1. Sprawdź lokalny plik
 	content, err = os.ReadFile(defaultThemesFile)
 	if err == nil {
 		return parseThemes(content)
 	}
 
-	// 2. Sprawdź User Config Directory
-	// np. ~/.config/todo-app/themes.json
 	configDir, err := os.UserConfigDir()
 	if err == nil {
 		globalPath := filepath.Join(configDir, appName, defaultThemesFile)
@@ -805,7 +817,6 @@ func loadThemes() []Theme {
 		}
 	}
 
-	// 3. Fallback: Embed (Wbudowane w .exe)
 	content, err = embeddedThemesFS.ReadFile(defaultThemesFile)
 	if err == nil {
 		return parseThemes(content)
@@ -814,7 +825,6 @@ func loadThemes() []Theme {
 	return nil
 }
 
-// Helper do parsowania JSON
 func parseThemes(content []byte) []Theme {
 	var jsonThemes []JSONTheme
 	if err := json.Unmarshal(content, &jsonThemes); err != nil {
@@ -836,18 +846,15 @@ func parseThemes(content []byte) []Theme {
 	return result
 }
 
-// Szuka configu: Local -> Config Dir
 func loadConfig() Config {
 	var cfg Config
 
-	// 1. Local
 	if _, err := os.Stat(configFile); err == nil {
 		data, _ := os.ReadFile(configFile)
 		json.Unmarshal(data, &cfg)
 		return cfg
 	}
 
-	// 2. Global
 	configDir, err := os.UserConfigDir()
 	if err == nil {
 		globalPath := filepath.Join(configDir, appName, configFile)
@@ -861,23 +868,19 @@ func loadConfig() Config {
 	return cfg
 }
 
-// Zapisuje config tam, gdzie go znalazł (priorytet: Local > Global)
-// Jeśli żadnego nie ma, próbuje utworzyć w Global.
 func saveConfig(themeName string) {
 	cfg := Config{SelectedTheme: themeName}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 
-	// 1. Jeśli istnieje lokalny, nadpisz go
 	if _, err := os.Stat(configFile); err == nil {
 		os.WriteFile(configFile, data, 0644)
 		return
 	}
 
-	// 2. Jeśli nie, zapisz w Global (tworząc folder jeśli trzeba)
 	configDir, err := os.UserConfigDir()
 	if err == nil {
 		appDir := filepath.Join(configDir, appName)
-		os.MkdirAll(appDir, 0755) // Upewnij się, że folder istnieje
+		os.MkdirAll(appDir, 0755)
 		globalPath := filepath.Join(appDir, configFile)
 		os.WriteFile(globalPath, data, 0644)
 	}
