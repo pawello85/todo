@@ -2,21 +2,14 @@ package main
 
 import (
 	"bufio"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
-
-// --- EMBEDDING ---
-//
-//go:embed themes.json
-var embeddedThemesFS embed.FS
 
 // --- ENUMS & CONSTANTS ---
 
@@ -29,7 +22,6 @@ const (
 )
 
 const (
-	appName           = "todo-app" // Nazwa folderu w configu
 	defaultThemesFile = "themes.json"
 	configFile        = "config.json"
 )
@@ -118,15 +110,13 @@ type model struct {
 // --- INITIALIZATION ---
 
 func initialModel(filename string) model {
-	// 1. Ładowanie motywów (Local -> ConfigDir -> Embed)
-	loadedThemes := loadThemes()
+	loadedThemes := loadThemes(defaultThemesFile)
 	if len(loadedThemes) > 0 {
 		themes = loadedThemes
 	} else {
 		themes = []Theme{defaultTheme}
 	}
 
-	// 2. Ładowanie konfiguracji
 	config := loadConfig()
 	startTheme := themes[0]
 
@@ -137,11 +127,9 @@ func initialModel(filename string) model {
 		}
 	}
 
-	activeItems, trashItems := loadTodo(filename)
-
 	m := model{
-		items:       activeItems,
-		trash:       trashItems,
+		items:       loadTodo(filename),
+		trash:       []item{},
 		cursorMain:  0,
 		filename:    filename,
 		activeTheme: startTheme,
@@ -279,7 +267,7 @@ func (m *model) handleInputConfirm() {
 		m.recalcVisible()
 		m.cursorMain = len(m.visibleItems) - 1
 	}
-	saveTodo(m.filename, m.items, m.trash)
+	saveTodo(m.filename, m.items)
 }
 
 func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -300,7 +288,7 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case " ":
 		if realIdx != -1 {
 			m.items[realIdx].done = !m.items[realIdx].done
-			saveTodo(m.filename, m.items, m.trash)
+			saveTodo(m.filename, m.items)
 			m.recalcVisible()
 		}
 	case "v":
@@ -336,29 +324,14 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "d":
 		if realIdx != -1 {
-			countToDelete := 1
-			currentLevel := m.items[realIdx].level
-
-			for i := realIdx + 1; i < len(m.items); i++ {
-				if m.items[i].level > currentLevel {
-					countToDelete++
-				} else {
-					break
-				}
-			}
-
-			deletedSlice := make([]item, countToDelete)
-			copy(deletedSlice, m.items[realIdx:realIdx+countToDelete])
-			m.trash = append(m.trash, deletedSlice...)
-
-			m.items = append(m.items[:realIdx], m.items[realIdx+countToDelete:]...)
-
+			deleted := m.items[realIdx]
+			m.trash = append(m.trash, deleted)
+			m.items = append(m.items[:realIdx], m.items[realIdx+1:]...)
 			m.recalcVisible()
 			if m.cursorMain >= len(m.visibleItems) && m.cursorMain > 0 {
 				m.cursorMain--
 			}
-
-			saveTodo(m.filename, m.items, m.trash)
+			saveTodo(m.filename, m.items)
 		}
 	case "tab":
 		if realIdx != -1 {
@@ -368,7 +341,7 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.items[realIdx].level = 0
 			}
 			m.recalcVisible()
-			saveTodo(m.filename, m.items, m.trash)
+			saveTodo(m.filename, m.items)
 		}
 	case "t":
 		m.state = viewThemeSelector
@@ -399,7 +372,7 @@ func (m model) updateTrash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursorTrash >= len(m.trash) && m.cursorTrash > 0 {
 				m.cursorTrash--
 			}
-			saveTodo(m.filename, m.items, m.trash)
+			saveTodo(m.filename, m.items)
 			m.recalcVisible()
 		}
 	case "x":
@@ -408,7 +381,6 @@ func (m model) updateTrash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursorTrash >= len(m.trash) && m.cursorTrash > 0 {
 				m.cursorTrash--
 			}
-			saveTodo(m.filename, m.items, m.trash)
 		}
 	}
 	return m, nil
@@ -448,7 +420,7 @@ func (m model) View() string {
 
 	title := "// TODO"
 	if m.state == viewTrash {
-		title = "// BIN (Persistent)"
+		title = "// BIN"
 	} else if m.state == viewThemeSelector {
 		title = "// THEMES"
 	}
@@ -526,13 +498,19 @@ func (m model) renderList(height int, t Theme) string {
 			cursor = "│ "
 		}
 
+		// --- TREE DRAWING (FIXED LOGIC + GLOBAL PADDING) ---
 		treePrefix := ""
+
+		// 1. Zawsze dodajemy spację (Padding)
+		// Jeśli element jest Root (L0), ma tylko spację.
 		if item.level == 0 {
 			treePrefix = " "
 		} else {
+			// Jeśli jest dzieckiem, budujemy drzewo
 			var sb strings.Builder
-			sb.WriteString(" ")
+			sb.WriteString(" ") // Global padding
 
+			// Pętla po rodzicach
 			for l := 1; l < item.level; l++ {
 				hasContinuation := false
 				for k := i + 1; k < len(m.visibleItems); k++ {
@@ -545,6 +523,7 @@ func (m model) renderList(height int, t Theme) string {
 						break
 					}
 				}
+
 				if hasContinuation {
 					sb.WriteString(" │ ")
 				} else {
@@ -552,6 +531,7 @@ func (m model) renderList(height int, t Theme) string {
 				}
 			}
 
+			// Łącznik obecnego elementu
 			isLastInGroup := true
 			for k := i + 1; k < len(m.visibleItems); k++ {
 				futureItem := m.visibleItems[k].data
@@ -572,6 +552,7 @@ func (m model) renderList(height int, t Theme) string {
 			treePrefix = sb.String()
 		}
 
+		// --- CHECKBOX ---
 		checkStr := "[ ]"
 		checkStyle := lipgloss.NewStyle().Foreground(t.Special)
 
@@ -591,6 +572,7 @@ func (m model) renderList(height int, t Theme) string {
 			titleStyle = lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
 		}
 
+		// Render
 		row := fmt.Sprintf("%s%s%s %s",
 			lipgloss.NewStyle().Foreground(t.Highlight).Render(cursor),
 			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
@@ -613,65 +595,13 @@ func (m model) renderTrash(height int, t Theme) string {
 		s.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render("\n  (Bin is empty)"))
 	}
 	start, end := paginator(m.cursorTrash, height, len(m.trash))
-
 	for i := start; i < end; i++ {
 		item := m.trash[i]
 		cursor := "  "
 		if m.cursorTrash == i {
 			cursor = "│ "
 		}
-
-		treePrefix := ""
-		if item.level == 0 {
-			treePrefix = " "
-		} else {
-			var sb strings.Builder
-			sb.WriteString(" ")
-
-			for l := 1; l < item.level; l++ {
-				hasContinuation := false
-				for k := i + 1; k < len(m.trash); k++ {
-					futureItem := m.trash[k]
-					if futureItem.level < l {
-						break
-					}
-					if futureItem.level == l {
-						hasContinuation = true
-						break
-					}
-				}
-				if hasContinuation {
-					sb.WriteString(" │ ")
-				} else {
-					sb.WriteString("   ")
-				}
-			}
-
-			isLastInGroup := true
-			for k := i + 1; k < len(m.trash); k++ {
-				futureItem := m.trash[k]
-				if futureItem.level < item.level {
-					break
-				}
-				if futureItem.level == item.level {
-					isLastInGroup = false
-					break
-				}
-			}
-
-			if isLastInGroup {
-				sb.WriteString(" └─")
-			} else {
-				sb.WriteString(" ├─")
-			}
-			treePrefix = sb.String()
-		}
-
-		row := fmt.Sprintf("%s%s[D] %s",
-			lipgloss.NewStyle().Foreground(t.Error).Render(cursor),
-			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
-			lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true).Render(item.title),
-		)
+		row := fmt.Sprintf("%s %s", lipgloss.NewStyle().Foreground(t.Error).Render(cursor), lipgloss.NewStyle().Foreground(t.Comment).Render(item.title))
 		s.WriteString(row + "\n")
 	}
 	return lipgloss.NewStyle().Width(m.width - 4).Height(height).Border(lipgloss.RoundedBorder()).BorderForeground(t.Error).Render(s.String())
@@ -711,18 +641,15 @@ func paginator(cursor, height, total int) (int, int) {
 	return start, end
 }
 
-// --- IO (LOADER) ---
+// --- IO (File & Config) ---
 
-func loadTodo(filename string) ([]item, []item) {
+func loadTodo(filename string) []item {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		return []item{}, []item{}
+		return []item{}
 	}
 	file, _ := os.Open(filename)
 	defer file.Close()
-
-	var active []item
-	var trash []item
-
+	var items []item
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -730,7 +657,6 @@ func loadTodo(filename string) ([]item, []item) {
 
 		if strings.HasPrefix(trimmed, "- [") {
 			isDone := strings.Contains(line, "- [x]")
-			isTrash := strings.Contains(line, "- [D]")
 
 			leadingSpaces := 0
 			for _, char := range line {
@@ -744,24 +670,17 @@ func loadTodo(filename string) ([]item, []item) {
 
 			parts := strings.SplitN(line, "]", 2)
 			if len(parts) > 1 {
-				newItem := item{title: strings.TrimSpace(parts[1]), done: isDone, level: level}
-
-				if isTrash {
-					trash = append(trash, newItem)
-				} else {
-					active = append(active, newItem)
-				}
+				items = append(items, item{title: strings.TrimSpace(parts[1]), done: isDone, level: level})
 			}
 		}
 	}
-	return active, trash
+	return items
 }
 
-func saveTodo(filename string, items []item, trash []item) {
+func saveTodo(filename string, items []item) {
 	file, _ := os.Create(filename)
 	defer file.Close()
 	writer := bufio.NewWriter(file)
-
 	for _, item := range items {
 		status := " "
 		if item.done {
@@ -771,55 +690,25 @@ func saveTodo(filename string, items []item, trash []item) {
 		line := fmt.Sprintf("%s- [%s] %s\n", prefix, status, item.title)
 		writer.WriteString(line)
 	}
-
-	for _, item := range trash {
-		prefix := strings.Repeat("  ", item.level)
-		line := fmt.Sprintf("%s- [D] %s\n", prefix, item.title)
-		writer.WriteString(line)
-	}
-
 	writer.Flush()
 }
 
-// --- IO (Config & Themes - GLOBAL SUPPORT) ---
+// --- IO (Config & Themes) ---
 
-// Sprawdza po kolei: Local Dir -> User Config Dir -> Embed
-func loadThemes() []Theme {
-	var content []byte
-	var err error
-
-	// 1. Sprawdź lokalny plik
-	content, err = os.ReadFile(defaultThemesFile)
-	if err == nil {
-		return parseThemes(content)
+func loadThemes(path string) []Theme {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
 	}
 
-	// 2. Sprawdź User Config Directory
-	// np. ~/.config/todo-app/themes.json
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		globalPath := filepath.Join(configDir, appName, defaultThemesFile)
-		content, err = os.ReadFile(globalPath)
-		if err == nil {
-			return parseThemes(content)
-		}
-	}
-
-	// 3. Fallback: Embed (Wbudowane w .exe)
-	content, err = embeddedThemesFS.ReadFile(defaultThemesFile)
-	if err == nil {
-		return parseThemes(content)
-	}
-
-	return nil
-}
-
-// Helper do parsowania JSON
-func parseThemes(content []byte) []Theme {
 	var jsonThemes []JSONTheme
 	if err := json.Unmarshal(content, &jsonThemes); err != nil {
 		return nil
 	}
+
 	var result []Theme
 	for _, jt := range jsonThemes {
 		result = append(result, Theme{
@@ -836,51 +725,20 @@ func parseThemes(content []byte) []Theme {
 	return result
 }
 
-// Szuka configu: Local -> Config Dir
 func loadConfig() Config {
 	var cfg Config
-
-	// 1. Local
-	if _, err := os.Stat(configFile); err == nil {
-		data, _ := os.ReadFile(configFile)
-		json.Unmarshal(data, &cfg)
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return cfg
 	}
-
-	// 2. Global
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		globalPath := filepath.Join(configDir, appName, configFile)
-		if _, err := os.Stat(globalPath); err == nil {
-			data, _ := os.ReadFile(globalPath)
-			json.Unmarshal(data, &cfg)
-			return cfg
-		}
-	}
-
+	data, _ := os.ReadFile(configFile)
+	json.Unmarshal(data, &cfg)
 	return cfg
 }
 
-// Zapisuje config tam, gdzie go znalazł (priorytet: Local > Global)
-// Jeśli żadnego nie ma, próbuje utworzyć w Global.
 func saveConfig(themeName string) {
 	cfg := Config{SelectedTheme: themeName}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-
-	// 1. Jeśli istnieje lokalny, nadpisz go
-	if _, err := os.Stat(configFile); err == nil {
-		os.WriteFile(configFile, data, 0644)
-		return
-	}
-
-	// 2. Jeśli nie, zapisz w Global (tworząc folder jeśli trzeba)
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		appDir := filepath.Join(configDir, appName)
-		os.MkdirAll(appDir, 0755) // Upewnij się, że folder istnieje
-		globalPath := filepath.Join(appDir, configFile)
-		os.WriteFile(globalPath, data, 0644)
-	}
+	os.WriteFile(configFile, data, 0644)
 }
 
 func main() {

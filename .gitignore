@@ -1,0 +1,24 @@
+# Binaries
+todo
+todo.exe
+main
+main.exe
+*.test
+*.out
+
+# User Data (Local overrides)
+# Ignorujemy pliki .md, bo to Twoje prywatne zadania
+*.md
+# Ignorujemy lokalny config, bo on ląduje w AppData, a lokalny służy tylko do testów
+config.json
+
+# ALE themes.json MUSI BYĆ w repo, bo jest używany przez 'embed' do budowania aplikacji!
+!themes.json
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.idea/
+.vscode/

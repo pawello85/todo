@@ -2,21 +2,14 @@ package main
 
 import (
 	"bufio"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
-
-// --- EMBEDDING ---
-//
-//go:embed themes.json
-var embeddedThemesFS embed.FS
 
 // --- ENUMS & CONSTANTS ---
 
@@ -29,7 +22,6 @@ const (
 )
 
 const (
-	appName           = "todo-app" // Nazwa folderu w configu
 	defaultThemesFile = "themes.json"
 	configFile        = "config.json"
 )
@@ -118,15 +110,13 @@ type model struct {
 // --- INITIALIZATION ---
 
 func initialModel(filename string) model {
-	// 1. Ładowanie motywów (Local -> ConfigDir -> Embed)
-	loadedThemes := loadThemes()
+	loadedThemes := loadThemes(defaultThemesFile)
 	if len(loadedThemes) > 0 {
 		themes = loadedThemes
 	} else {
 		themes = []Theme{defaultTheme}
 	}
 
-	// 2. Ładowanie konfiguracji
 	config := loadConfig()
 	startTheme := themes[0]
 
@@ -526,6 +516,7 @@ func (m model) renderList(height int, t Theme) string {
 			cursor = "│ "
 		}
 
+		// --- TREE DRAWING (PERFECT LOGIC) ---
 		treePrefix := ""
 		if item.level == 0 {
 			treePrefix = " "
@@ -572,6 +563,7 @@ func (m model) renderList(height int, t Theme) string {
 			treePrefix = sb.String()
 		}
 
+		// --- CHECKBOX ---
 		checkStr := "[ ]"
 		checkStyle := lipgloss.NewStyle().Foreground(t.Special)
 
@@ -621,6 +613,7 @@ func (m model) renderTrash(height int, t Theme) string {
 			cursor = "│ "
 		}
 
+		// --- TREE DRAWING FOR TRASH (Now using Full Logic!) ---
 		treePrefix := ""
 		if item.level == 0 {
 			treePrefix = " "
@@ -667,6 +660,7 @@ func (m model) renderTrash(height int, t Theme) string {
 			treePrefix = sb.String()
 		}
 
+		// Trash Item (Align [D] with [ ] - both 3 chars)
 		row := fmt.Sprintf("%s%s[D] %s",
 			lipgloss.NewStyle().Foreground(t.Error).Render(cursor),
 			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
@@ -711,7 +705,7 @@ func paginator(cursor, height, total int) (int, int) {
 	return start, end
 }
 
-// --- IO (LOADER) ---
+// --- IO (File & Config) ---
 
 func loadTodo(filename string) ([]item, []item) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
@@ -781,45 +775,22 @@ func saveTodo(filename string, items []item, trash []item) {
 	writer.Flush()
 }
 
-// --- IO (Config & Themes - GLOBAL SUPPORT) ---
+// --- IO (Config & Themes) ---
 
-// Sprawdza po kolei: Local Dir -> User Config Dir -> Embed
-func loadThemes() []Theme {
-	var content []byte
-	var err error
-
-	// 1. Sprawdź lokalny plik
-	content, err = os.ReadFile(defaultThemesFile)
-	if err == nil {
-		return parseThemes(content)
+func loadThemes(path string) []Theme {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
 	}
 
-	// 2. Sprawdź User Config Directory
-	// np. ~/.config/todo-app/themes.json
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		globalPath := filepath.Join(configDir, appName, defaultThemesFile)
-		content, err = os.ReadFile(globalPath)
-		if err == nil {
-			return parseThemes(content)
-		}
-	}
-
-	// 3. Fallback: Embed (Wbudowane w .exe)
-	content, err = embeddedThemesFS.ReadFile(defaultThemesFile)
-	if err == nil {
-		return parseThemes(content)
-	}
-
-	return nil
-}
-
-// Helper do parsowania JSON
-func parseThemes(content []byte) []Theme {
 	var jsonThemes []JSONTheme
 	if err := json.Unmarshal(content, &jsonThemes); err != nil {
 		return nil
 	}
+
 	var result []Theme
 	for _, jt := range jsonThemes {
 		result = append(result, Theme{
@@ -836,51 +807,20 @@ func parseThemes(content []byte) []Theme {
 	return result
 }
 
-// Szuka configu: Local -> Config Dir
 func loadConfig() Config {
 	var cfg Config
-
-	// 1. Local
-	if _, err := os.Stat(configFile); err == nil {
-		data, _ := os.ReadFile(configFile)
-		json.Unmarshal(data, &cfg)
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return cfg
 	}
-
-	// 2. Global
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		globalPath := filepath.Join(configDir, appName, configFile)
-		if _, err := os.Stat(globalPath); err == nil {
-			data, _ := os.ReadFile(globalPath)
-			json.Unmarshal(data, &cfg)
-			return cfg
-		}
-	}
-
+	data, _ := os.ReadFile(configFile)
+	json.Unmarshal(data, &cfg)
 	return cfg
 }
 
-// Zapisuje config tam, gdzie go znalazł (priorytet: Local > Global)
-// Jeśli żadnego nie ma, próbuje utworzyć w Global.
 func saveConfig(themeName string) {
 	cfg := Config{SelectedTheme: themeName}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-
-	// 1. Jeśli istnieje lokalny, nadpisz go
-	if _, err := os.Stat(configFile); err == nil {
-		os.WriteFile(configFile, data, 0644)
-		return
-	}
-
-	// 2. Jeśli nie, zapisz w Global (tworząc folder jeśli trzeba)
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		appDir := filepath.Join(configDir, appName)
-		os.MkdirAll(appDir, 0755) // Upewnij się, że folder istnieje
-		globalPath := filepath.Join(appDir, configFile)
-		os.WriteFile(globalPath, data, 0644)
-	}
+	os.WriteFile(configFile, data, 0644)
 }
 
 func main() {
