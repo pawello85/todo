@@ -113,6 +113,9 @@ type model struct {
 	width       int
 	height      int
 	activeTheme Theme
+
+	// NOWE POLE: Do obsługi przewijania (viewport)
+	viewportY int
 }
 
 // --- INITIALIZATION ---
@@ -144,6 +147,7 @@ func initialModel(filename string) model {
 		filename:    filename,
 		activeTheme: startTheme,
 		state:       viewMain,
+		viewportY:   0, // Startujemy od góry
 	}
 	m.recalcVisible()
 
@@ -227,6 +231,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			if m.state != viewMain {
 				m.state = viewMain
+				m.viewportY = 0 // Reset scrolla przy wyjściu z innych widoków
 				return m, nil
 			}
 			m.quitting = true
@@ -392,6 +397,7 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "B":
 		m.state = viewTrash
 		m.cursorTrash = 0
+		m.viewportY = 0 // Reset scrolla przy wejściu do kosza
 	}
 	return m, nil
 }
@@ -400,6 +406,7 @@ func (m model) updateTrash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "B":
 		m.state = viewMain
+		m.viewportY = 0 // Reset scrolla przy powrocie
 	case "up", "k":
 		if m.cursorTrash > 0 {
 			m.cursorTrash--
@@ -458,6 +465,10 @@ func (m model) View() string {
 		return ""
 	}
 
+	if m.width == 0 {
+		return "loading..."
+	}
+
 	t := m.activeTheme
 	dimStyle := lipgloss.NewStyle().Foreground(t.Comment)
 
@@ -474,9 +485,31 @@ func (m model) View() string {
 		fullPath = m.filename
 	}
 
-	headerText := fmt.Sprintf("// %s %s", modeName, fullPath)
-	styledHeader := lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight).Bold(true).Padding(0, 1).Render(headerText)
-	headerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, styledHeader)
+	// 1. Logika skracania ścieżki
+	prefix := fmt.Sprintf("// %s ", modeName)
+	// Odejmujemy 2 znaki na padding (lewo/prawo) wewnątrz podświetlenia
+	availableWidth := m.width - len(prefix) - 2
+
+	displayPath := fullPath
+	if availableWidth > 3 && len(fullPath) > availableWidth {
+		cutIdx := len(fullPath) - availableWidth + 3
+		if cutIdx < len(fullPath) {
+			displayPath = "..." + fullPath[cutIdx:]
+		}
+	}
+
+	headerText := prefix + displayPath
+
+	// 2. Renderujemy SAM TEKST z tłem (tylko na szerokość tekstu + padding)
+	styledContent := lipgloss.NewStyle().
+		Foreground(t.Base).
+		Background(t.Highlight).
+		Bold(true).
+		Padding(0, 1). // "+1 kratka" z lewej i prawej
+		Render(headerText)
+
+	// 3. Centrujemy ten "kafelek" na całej szerokości ekranu
+	centeredHeader := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, styledContent)
 
 	// --- FOOTER ---
 	help := ""
@@ -497,9 +530,10 @@ func (m model) View() string {
 	footerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer)
 
 	// --- CONTENT ---
-	availableH := m.height - 4
-	if availableH < 5 {
-		availableH = 5
+	// Zostawiamy -5, bo to działało dobrze na off-by-one error
+	availableH := m.height - 5
+	if availableH < 1 {
+		availableH = 1
 	}
 
 	var content string
@@ -512,29 +546,34 @@ func (m model) View() string {
 		content = m.renderThemeSelector(availableH, t)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, headerBlock, content, footerBlock)
+	return lipgloss.JoinVertical(lipgloss.Left, centeredHeader, content, footerBlock)
 }
 
-func (m model) renderList(height int, t Theme) string {
-	var s strings.Builder
-	start, end := paginator(m.cursorMain, height, len(m.visibleItems))
+// --- SMART WRAPPING RENDER LIST ---
+func (m *model) renderList(height int, t Theme) string {
+	if m.width < 10 {
+		return "Window too narrow"
+	}
 
-	for i := start; i < end; i++ {
-		vItem := m.visibleItems[i]
+	var visualLines []string
+
+	// Zakres linii dla kursora
+	cursorStartLine := 0
+	cursorEndLine := 0
+
+	for i, vItem := range m.visibleItems {
 		item := vItem.data
 		isCursor := (m.cursorMain == i)
 
-		cursor := "  "
-		if isCursor {
-			cursor = "│ "
+		titleStyle := lipgloss.NewStyle().Foreground(t.Text)
+		if item.done {
+			titleStyle = lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
 		}
 
-		treePrefix := ""
-		if item.level == 0 {
-			treePrefix = " "
-		} else {
-			var sb strings.Builder
-			sb.WriteString(" ")
+		// 1. PREFIX RODZICA
+		var parentPrefixSb strings.Builder
+		if item.level > 0 {
+			parentPrefixSb.WriteString(" ")
 			for l := 1; l < item.level; l++ {
 				hasContinuation := false
 				for k := i + 1; k < len(m.visibleItems); k++ {
@@ -548,11 +587,17 @@ func (m model) renderList(height int, t Theme) string {
 					}
 				}
 				if hasContinuation {
-					sb.WriteString(" │ ")
+					parentPrefixSb.WriteString(" │ ")
 				} else {
-					sb.WriteString("   ")
+					parentPrefixSb.WriteString("   ")
 				}
 			}
+		}
+		parentPrefix := parentPrefixSb.String()
+
+		// 2. KONEKTOR
+		itemConnector := ""
+		if item.level > 0 {
 			isLastInGroup := true
 			for k := i + 1; k < len(m.visibleItems); k++ {
 				futureItem := m.visibleItems[k].data
@@ -565,16 +610,17 @@ func (m model) renderList(height int, t Theme) string {
 				}
 			}
 			if isLastInGroup {
-				sb.WriteString(" └─")
+				itemConnector = " └─"
 			} else {
-				sb.WriteString(" ├─")
+				itemConnector = " ├─"
 			}
-			treePrefix = sb.String()
+		} else {
+			itemConnector = " "
 		}
 
+		// 3. CHECKBOX
 		checkStr := "[ ]"
 		checkStyle := lipgloss.NewStyle().Foreground(t.Special)
-
 		if item.collapsed {
 			checkStr = "[+]"
 			checkStyle = lipgloss.NewStyle().Foreground(t.Accent)
@@ -586,55 +632,166 @@ func (m model) renderList(height int, t Theme) string {
 			checkStyle = lipgloss.NewStyle().Foreground(t.Text)
 		}
 
-		// --- INLINE INPUT RENDERING ---
-		var titleRendered string
-		if isCursor && m.inputMode {
-			inputStyle := lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight)
-			titleRendered = inputStyle.Render(m.inputBuf + "█")
-		} else {
-			titleStyle := lipgloss.NewStyle().Foreground(t.Text)
-			if item.done {
-				titleStyle = lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
-			}
-			titleRendered = titleStyle.Render(item.title)
+		cursorStr := "  "
+		if isCursor {
+			cursorStr = "➤ "
 		}
 
-		row := fmt.Sprintf("%s%s%s %s",
-			lipgloss.NewStyle().Foreground(t.Highlight).Render(cursor),
-			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
-			checkStyle.Render(checkStr),
-			titleRendered,
-		)
-		s.WriteString(row + "\n")
+		// 4. TREŚĆ
+		prefixWidth := 2 + lipgloss.Width(parentPrefix) + lipgloss.Width(itemConnector) + 3 + 1
+		availableWidth := m.width - 2 - prefixWidth
+		if availableWidth < 10 {
+			availableWidth = 10
+		}
+
+		content := item.title
+		if isCursor && m.inputMode {
+			content = m.inputBuf + "█"
+		}
+
+		wrappedRaw := lipgloss.NewStyle().Width(availableWidth).Render(content)
+		rawLines := strings.Split(wrappedRaw, "\n")
+
+		if isCursor {
+			cursorStartLine = len(visualLines)
+		}
+
+		// 5. RENDEROWANIE LINII
+		for lineIdx, rawLine := range rawLines {
+			var rowSb strings.Builder
+			rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Highlight).Render(cursorStr))
+			rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(parentPrefix))
+
+			cleanLine := strings.TrimRight(rawLine, " ")
+
+			if lineIdx == 0 {
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(itemConnector))
+				rowSb.WriteString(checkStyle.Render(checkStr))
+				rowSb.WriteString(" ")
+				if isCursor && m.inputMode {
+					rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight).Render(cleanLine))
+				} else {
+					rowSb.WriteString(titleStyle.Render(cleanLine))
+				}
+			} else {
+				connectorContinuation := "   "
+				if strings.Contains(itemConnector, "├─") {
+					connectorContinuation = " │ "
+				} else if strings.Contains(itemConnector, "└─") {
+					connectorContinuation = "   "
+				} else {
+					connectorContinuation = " "
+				}
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(connectorContinuation))
+
+				checkboxSpace := "   "
+				if i+1 < len(m.visibleItems) && m.visibleItems[i+1].data.level > item.level {
+					if !item.collapsed {
+						checkboxSpace = " │ "
+					}
+				}
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(checkboxSpace))
+				rowSb.WriteString(" ")
+
+				if isCursor && m.inputMode {
+					rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Base).Background(t.Highlight).Render(cleanLine))
+				} else {
+					rowSb.WriteString(titleStyle.Render(cleanLine))
+				}
+			}
+			visualLines = append(visualLines, rowSb.String())
+		}
+		if isCursor {
+			cursorEndLine = len(visualLines)
+		}
 	}
+
+	// 6. VIEWPORT CALCULATION
+	if cursorStartLine < m.viewportY {
+		m.viewportY = cursorStartLine
+	}
+	if cursorEndLine > m.viewportY+height {
+		m.viewportY = cursorEndLine - height
+	}
+	if m.viewportY > len(visualLines)-height && len(visualLines) > height {
+		m.viewportY = len(visualLines) - height
+	}
+	if m.viewportY < 0 {
+		m.viewportY = 0
+	}
+
+	start := m.viewportY
+	end := start + height
+	if end > len(visualLines) {
+		end = len(visualLines)
+	}
+
+	// 7. SKŁADANIE WIDOKU ZE WSKAŹNIKAMI SCROLLA
+	var finalLines []string
+	for k := start; k < end; k++ {
+		finalLines = append(finalLines, visualLines[k])
+	}
+	// Dopełnienie
+	for k := 0; k < height-(end-start); k++ {
+		finalLines = append(finalLines, "")
+	}
+
+	// LOGIKA WSKAŹNIKÓW SCROLLA (...)
+	canScrollUp := start > 0
+	canScrollDown := end < len(visualLines)
+
+	scrollMarkerStyle := lipgloss.NewStyle().
+		Foreground(t.Comment).
+		Bold(true).
+		Align(lipgloss.Center).
+		Width(m.width - 4) // Szerokość wewnątrz ramki
+
+	if canScrollUp && len(finalLines) > 0 {
+		// Nadpisujemy pierwszą linię wskaźnikiem
+		finalLines[0] = scrollMarkerStyle.Render("↑ ... ↑")
+	}
+
+	if canScrollDown && len(finalLines) > 0 {
+		// Nadpisujemy ostatnią linię wskaźnikiem
+		finalLines[len(finalLines)-1] = scrollMarkerStyle.Render("↓ ... ↓")
+	}
+
+	finalOutput := strings.Join(finalLines, "\n")
 
 	return lipgloss.NewStyle().
 		Width(m.width - 2).Height(height).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Highlight).
-		Render(s.String())
+		Render(finalOutput)
 }
 
-func (m model) renderTrash(height int, t Theme) string {
-	var s strings.Builder
-	if len(m.trash) == 0 {
-		s.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render("\n  (Bin is empty)"))
+// --- SMART WRAPPING TRASH ---
+func (m *model) renderTrash(height int, t Theme) string {
+	if m.width < 10 {
+		return "Window too narrow"
 	}
-	start, end := paginator(m.cursorTrash, height, len(m.trash))
 
-	for i := start; i < end; i++ {
-		item := m.trash[i]
-		cursor := "  "
-		if m.cursorTrash == i {
-			cursor = "│ "
-		}
+	var visualLines []string
+	cursorStartLine := 0
+	cursorEndLine := 0
 
-		treePrefix := ""
-		if item.level == 0 {
-			treePrefix = " "
-		} else {
-			var sb strings.Builder
-			sb.WriteString(" ")
+	if len(m.trash) == 0 {
+		emptyMsg := lipgloss.NewStyle().Foreground(t.Comment).Render("  (Bin is empty)")
+		return lipgloss.NewStyle().
+			Width(m.width - 2).Height(height).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Error).
+			Render(emptyMsg)
+	}
+
+	for i, item := range m.trash {
+		isCursor := (m.cursorTrash == i)
+		titleStyle := lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true)
+
+		// 1. PREFIX
+		var parentPrefixSb strings.Builder
+		if item.level > 0 {
+			parentPrefixSb.WriteString(" ")
 			for l := 1; l < item.level; l++ {
 				hasContinuation := false
 				for k := i + 1; k < len(m.trash); k++ {
@@ -648,11 +805,17 @@ func (m model) renderTrash(height int, t Theme) string {
 					}
 				}
 				if hasContinuation {
-					sb.WriteString(" │ ")
+					parentPrefixSb.WriteString(" │ ")
 				} else {
-					sb.WriteString("   ")
+					parentPrefixSb.WriteString("   ")
 				}
 			}
+		}
+		parentPrefix := parentPrefixSb.String()
+
+		// 2. KONEKTOR
+		itemConnector := ""
+		if item.level > 0 {
 			isLastInGroup := true
 			for k := i + 1; k < len(m.trash); k++ {
 				futureItem := m.trash[k]
@@ -665,26 +828,127 @@ func (m model) renderTrash(height int, t Theme) string {
 				}
 			}
 			if isLastInGroup {
-				sb.WriteString(" └─")
+				itemConnector = " └─"
 			} else {
-				sb.WriteString(" ├─")
+				itemConnector = " ├─"
 			}
-			treePrefix = sb.String()
+		} else {
+			itemConnector = " "
 		}
 
-		row := fmt.Sprintf("%s%s[D] %s",
-			lipgloss.NewStyle().Foreground(t.Error).Render(cursor),
-			lipgloss.NewStyle().Foreground(t.Comment).Render(treePrefix),
-			lipgloss.NewStyle().Foreground(t.Comment).Strikethrough(true).Render(item.title),
-		)
-		s.WriteString(row + "\n")
+		// 3. MARKER
+		markerStr := "[D]"
+		markerStyle := lipgloss.NewStyle().Foreground(t.Error)
+		cursorStr := "  "
+		if isCursor {
+			cursorStr = "➤ "
+		}
+
+		// 4. TREŚĆ
+		prefixWidth := 2 + lipgloss.Width(parentPrefix) + lipgloss.Width(itemConnector) + 3 + 1
+		availableWidth := m.width - 2 - prefixWidth
+		if availableWidth < 10 {
+			availableWidth = 10
+		}
+
+		content := item.title
+		wrappedRaw := lipgloss.NewStyle().Width(availableWidth).Render(content)
+		rawLines := strings.Split(wrappedRaw, "\n")
+
+		if isCursor {
+			cursorStartLine = len(visualLines)
+		}
+
+		for lineIdx, rawLine := range rawLines {
+			var rowSb strings.Builder
+			rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Error).Render(cursorStr))
+			rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(parentPrefix))
+			cleanLine := strings.TrimRight(rawLine, " ")
+
+			if lineIdx == 0 {
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(itemConnector))
+				rowSb.WriteString(markerStyle.Render(markerStr))
+				rowSb.WriteString(" ")
+				rowSb.WriteString(titleStyle.Render(cleanLine))
+			} else {
+				connectorContinuation := "   "
+				if strings.Contains(itemConnector, "├─") {
+					connectorContinuation = " │ "
+				} else if strings.Contains(itemConnector, "└─") {
+					connectorContinuation = "   "
+				} else {
+					connectorContinuation = " "
+				}
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(connectorContinuation))
+
+				markerSpace := "   "
+				if i+1 < len(m.trash) && m.trash[i+1].level > item.level {
+					markerSpace = " │ "
+				}
+				rowSb.WriteString(lipgloss.NewStyle().Foreground(t.Comment).Render(markerSpace))
+				rowSb.WriteString(" ")
+				rowSb.WriteString(titleStyle.Render(cleanLine))
+			}
+			visualLines = append(visualLines, rowSb.String())
+		}
+		if isCursor {
+			cursorEndLine = len(visualLines)
+		}
 	}
+
+	// 6. VIEWPORT
+	if cursorStartLine < m.viewportY {
+		m.viewportY = cursorStartLine
+	}
+	if cursorEndLine > m.viewportY+height {
+		m.viewportY = cursorEndLine - height
+	}
+	if m.viewportY > len(visualLines)-height && len(visualLines) > height {
+		m.viewportY = len(visualLines) - height
+	}
+	if m.viewportY < 0 {
+		m.viewportY = 0
+	}
+
+	start := m.viewportY
+	end := start + height
+	if end > len(visualLines) {
+		end = len(visualLines)
+	}
+
+	// 7. FINAL RENDER Z SCROLL MARKERS
+	var finalLines []string
+	for k := start; k < end; k++ {
+		finalLines = append(finalLines, visualLines[k])
+	}
+	for k := 0; k < height-(end-start); k++ {
+		finalLines = append(finalLines, "")
+	}
+
+	canScrollUp := start > 0
+	canScrollDown := end < len(visualLines)
+
+	scrollMarkerStyle := lipgloss.NewStyle().
+		Foreground(t.Error). // Czerwony dla kosza
+		Bold(true).
+		Align(lipgloss.Center).
+		Width(m.width - 4)
+
+	if canScrollUp && len(finalLines) > 0 {
+		finalLines[0] = scrollMarkerStyle.Render("↑ ... ↑")
+	}
+
+	if canScrollDown && len(finalLines) > 0 {
+		finalLines[len(finalLines)-1] = scrollMarkerStyle.Render("↓ ... ↓")
+	}
+
+	finalOutput := strings.Join(finalLines, "\n")
 
 	return lipgloss.NewStyle().
 		Width(m.width - 2).Height(height).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Error).
-		Render(s.String())
+		Render(finalOutput)
 }
 
 func (m model) renderThemeSelector(height int, t Theme) string {
