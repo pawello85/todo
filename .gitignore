@@ -9,6 +9,7 @@ main.exe
 # User Data (Local overrides)
 # Ignorujemy pliki .md, bo to Twoje prywatne zadania
 *.md
+!README.md
 # Ignorujemy lokalny config, bo on ląduje w AppData, a lokalny służy tylko do testów
 config.json
 
