@@ -356,7 +356,7 @@ func (m model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inputBuf = m.items[realIdx].title
 		}
 
-	case "d":
+	case "d", "delete":
 		if realIdx != -1 {
 			countToDelete := 1
 			currentLevel := m.items[realIdx].level
@@ -531,7 +531,7 @@ func (m model) View() string {
 
 	// --- CONTENT ---
 	// Zostawiamy -5, bo to działało dobrze na off-by-one error
-	availableH := m.height - 5
+	availableH := m.height - 6
 	if availableH < 1 {
 		availableH = 1
 	}
@@ -634,7 +634,7 @@ func (m *model) renderList(height int, t Theme) string {
 
 		cursorStr := "  "
 		if isCursor {
-			cursorStr = "➤ "
+			cursorStr = " ➤"
 		}
 
 		// 4. TREŚĆ
@@ -841,7 +841,7 @@ func (m *model) renderTrash(height int, t Theme) string {
 		markerStyle := lipgloss.NewStyle().Foreground(t.Error)
 		cursorStr := "  "
 		if isCursor {
-			cursorStr = "➤ "
+			cursorStr = " ➤"
 		}
 
 		// 4. TREŚĆ
