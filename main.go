@@ -472,7 +472,7 @@ func (m model) View() string {
 	t := m.activeTheme
 	dimStyle := lipgloss.NewStyle().Foreground(t.Comment)
 
-	// --- HEADER ---
+	// --- 1. NAGŁÓWEK ---
 	modeName := "TODO"
 	if m.state == viewTrash {
 		modeName = "BIN"
@@ -485,11 +485,8 @@ func (m model) View() string {
 		fullPath = m.filename
 	}
 
-	// 1. Logika skracania ścieżki
 	prefix := fmt.Sprintf("// %s ", modeName)
-	// Odejmujemy 2 znaki na padding (lewo/prawo) wewnątrz podświetlenia
 	availableWidth := m.width - len(prefix) - 2
-
 	displayPath := fullPath
 	if availableWidth > 3 && len(fullPath) > availableWidth {
 		cutIdx := len(fullPath) - availableWidth + 3
@@ -499,39 +496,37 @@ func (m model) View() string {
 	}
 
 	headerText := prefix + displayPath
-
-	// 2. Renderujemy SAM TEKST z tłem (tylko na szerokość tekstu + padding)
-	styledContent := lipgloss.NewStyle().
+	styledHeader := lipgloss.NewStyle().
 		Foreground(t.Base).
 		Background(t.Highlight).
 		Bold(true).
-		Padding(0, 1). // "+1 kratka" z lewej i prawej
+		Padding(0, 1).
 		Render(headerText)
 
-	// 3. Centrujemy ten "kafelek" na całej szerokości ekranu
-	centeredHeader := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, styledContent)
+	centeredHeader := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, styledHeader)
 
-	// --- FOOTER ---
+	// --- 2. STOPKA ---
 	help := ""
 	switch m.state {
 	case viewMain:
-		help = "New(n) • Subtask(m) • Edit(e) • Fold(v) • Del(d) • Bin(Shift+B) • Theme(t) • Quit(q)"
+		help = "n:New • m:Sub • e:Edit • v:Fold • d:Del • B:Bin • t:Theme • q:Quit"
 	case viewTrash:
-		help = "Restore(Enter) • Purge(x) • Back(Esc)"
+		help = "Enter:Restore • x:Purge • Esc:Back"
 	case viewThemeSelector:
-		help = "Select(Enter) • Back(Esc)"
+		help = "Enter:Select • Esc:Back"
 	}
-
 	if m.inputMode {
-		help = "Enter to Confirm • Esc to Cancel"
+		help = "Enter:Confirm • Esc:Cancel"
 	}
 
 	footer := dimStyle.Render(help)
-	footerBlock := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer)
+	centeredFooter := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer)
 
-	// --- CONTENT ---
-	// Zostawiamy -5, bo to działało dobrze na off-by-one error
-	availableH := m.height - 6
+	// --- 3. OBLICZANIE WYSOKOŚCI ---
+	// gap(1) + header(1) + gap(1) + border_top(1) + border_bottom(1) + gap(1) + footer(1)
+	// Łącznie zajętych linii: 7
+	const uiOverhead = 7
+	availableH := m.height - uiOverhead
 	if availableH < 1 {
 		availableH = 1
 	}
@@ -546,7 +541,16 @@ func (m model) View() string {
 		content = m.renderThemeSelector(availableH, t)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, centeredHeader, content, footerBlock)
+	// --- 4. FINALNY UKŁAD (GAP-HEADER-GAP-CONTENT-GAP-FOOTER) ---
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		"",             // GAP GÓRA
+		centeredHeader, // HEADER
+		"",             // GAP
+		content,        // RAMKA (wysokość availableH + 2 linie borderu)
+		"",             // GAP
+		centeredFooter, // FOOTER
+	)
 }
 
 // --- SMART WRAPPING RENDER LIST ---
