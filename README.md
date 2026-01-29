@@ -19,12 +19,12 @@ A minimalist, tree-based Todo list application running in your terminal. Built w
 If you have Go installed, you can install the application directly without cloning the repository:
 
 ```bash
-go install [github.com/pawello85/todo@latest](https://github.com/pawello85/todo@latest)
+go install github.com/pawello85/todo@latest
 ```
 ### Method 2: from source
 
 ```bash 
-git clone [https://github.com/pawello85/todo.git](https://github.com/pawello85/todo.git)
+git clone https://github.com/pawello85/todo.git
 cd todo
 go install
 ```
